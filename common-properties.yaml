@@ -1,0 +1,9 @@
+modelVersion: 2.0
+
+properties:
+  # Microservice helm chart name
+  - helm-chart-name: eric-enmsg-stratustest
+  # The name of a docker image to pull and store in ARM in tar.gz format
+  - docker-image-name: eric-enmsg-stratustest
+  # Drop repo name
+  - image-drop-repopath: proj-enm

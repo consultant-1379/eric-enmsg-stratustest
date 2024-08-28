@@ -1,0 +1,115 @@
+modelVersion: 2.0
+
+import:
+  common: common-properties.yaml
+
+properties:
+  # Microservice helm chart name
+  - helm-chart-name: eric-enmsg-stratustest
+   # Helm chart repository including the release candidate build
+  - helm-chart-repo: https://arm.epk.ericsson.se/artifactory/proj-enm-helm/eric-enmsg-stratustest
+  # Microservice released helm chart repository
+  # need to figure out how to handle the cENM proj image released/  the following value is mock
+  - helm-chart-released-repo: https://arm.epk.ericsson.se/artifactory/proj-enm-helm/eric-enmsg-stratustest-released-helm
+  # URL to released helm chart package
+  - helm-chart-artifact-url: ${helm-chart-released-repo}/${common.helm-chart-name}/${var.helmchart-file-name}
+  # Released docker ARM repo project name
+  # need to figure out how to handle the cENM proj image released/ the following value is mock
+  - image-released-proj: proj-enm-released
+  # URL to docker image manifest
+  # need to figure out how to handle the cENM proj image released/ the following value is mock
+  - image-manifest-url: https://armdocker.rnd.ericsson.se/artifactory/docker-v2-global-local/${image-released-proj}/${common.docker-image-name}/${env.RELEASE_CANDIDATE}/manifest.json
+  # Released repository virtual helm repo (containing all released microservices)
+  # For a Generic ADP Service this should be set to: https://arm.sero.gic.ericsson.se/artifactory/proj-adp-gs-released-helm/
+   # need to figure out how to handle the cENM proj image released/ the following value is what's mock
+  - helm-chart-virtual-released-repo: https://arm.epk.ericsson.se/artifactory/proj-enm-helm/eric-enmsg-stratustest-released-helm
+  # Docker image drop path
+  - image-drop-path: armdocker.rnd.ericsson.se/${common.image-drop-repopath}/${common.docker-image-name}
+  # Microservice released docker images # need to figure out how to handle the cENM proj image released/
+  - image-released-path: armdocker.rnd.ericsson.se/${image-released-proj}/${common.docker-image-name}:${env.RELEASE_CANDIDATE}
+  # Tmp folder folder released helm chart
+  - helm-chart-released-folder: 'build/released-charts'
+    # ARM generic repository where released docker images are stored in tar.gz format
+    # need to figure out how to handle the cENM proj/ the following value is mock
+  - released-artifacts-repo: armdocker.rnd.ericsson.se/proj_oss_releases
+
+
+env:
+    # the microservice release candidate version (e.g. 1.0.0-3)
+  - RELEASE_CANDIDATE
+  - DRY_RUN (default=true)
+    # the ARM functional user name for Helm repository
+  - HELM_USER
+    # the ARM functional user token for Helm repository
+  - HELM_TOKEN
+  # HELM Repository Token (a J-Frog token in ARM)
+  - DOCKER_PASSWORD
+var:
+  - released-version
+
+rules:
+  # The rule cleans artifacts-properties and docker images from the docker-images-released-folder
+  clean:
+    - task: tmp
+      cmd: rm -rf .bob/
+    - task: artifact-properties
+      cmd: rm -f artifact.properties
+    - task: clean-build-folder
+      cmd: rm -rf build/
+
+  init:
+    - task: generate-released-version
+      cmd:
+        - echo ${env.RELEASE_CANDIDATE} | sed s/-/+/ > .bob/var.released-version
+        - cat .bob/var.released-version | cut -d '+' -f 1 > .bob/var.released-version-without-build-number
+    - task: helmchart-file-name
+      cmd: echo ${common.helm-chart-name}-${var.released-version}.tgz > .bob/var.helmchart-file-name
+    - task: generate-adp-artifacts
+      cmd: generate-adp-artifacts
+           --chart-name ${helm-chart-name}
+           --chart-version ${var.released-version}
+           --chart-repo ${helm-chart-released-repo}
+
+  # Pull docker image from DROP repo and Publish in released
+  publish-released-docker-image:
+    - task: image-pull
+      cmd:
+       - docker pull ${image-drop-path}:${env.RELEASE_CANDIDATE}
+    - task: image-tag-released
+      cmd:
+       - docker tag ${image-drop-path}:${env.RELEASE_CANDIDATE} ${image-released-path}
+    - task: release-docker-image
+      cmd:
+       - docker push ${image-released-path}
+    - task: generate-release-chart
+      cmd:
+        - mkdir -p ${helm-chart-released-folder}
+        - generate_release_helm_package
+            --repo ${helm-chart-repo}
+            --chart-name ${common.helm-chart-name}
+            --chart-version ${env.RELEASE_CANDIDATE}
+            --output ${helm-chart-released-folder}
+            --chart-released-version ${var.released-version}
+            --helm-user ${env.HELM_USER}
+            --arm-api-token ${env.HELM_TOKEN}
+            --replace ${common.image-drop-repopath}=${image-released-proj}
+    - task: release-helm-package
+      cmd:
+        - upload_helm_package
+           --chart-filename "${helm-chart-released-folder}/${common.helm-chart-name}-${var.released-version}.tgz"
+           --chart-repo ${helm-chart-released-repo}
+           --helm-user ${env.HELM_USER}
+           --helm-token ${env.HELM_TOKEN}
+           --virtual-repo ${helm-chart-virtual-released-repo}
+           --dry-run ${env.DRY_RUN}
+  # # Fetch artifact checksums from artifactory and get commit hash
+ fetch-artifact-checksums:
+  #   # Get artifact hashs & set values in Mimer
+  #   - task: init
+  #     cmd:
+  #     - git show-ref --hash ${env.RELEASE_CANDIDATE} > .bob/var.commithash
+  #     - arm get-checksum --url ${helm-chart-artifact-url} --sha256 --apikey ${env.HELM_TOKEN} --output .bob/var.sha256-helm --dry-run ${env.DRY_RUN}
+  #     - arm get-checksum --url ${image-manifest-url} --sha256 --apikey ${env.DOCKER_PASSWORD} --output .bob/var.sha256-image --dry-run ${env.DRY_RUN}
+  #     - munin set-artifact --server sandbox -t ${env.MUNIN_TOKEN} -u ${git-clone-url} --vcs git --commit ${var.commithash} -p CAV100000 -v ${var.released-version-without-build-number} --dry-run ${env.DRY_RUN}
+  #     - munin set-artifact --server sandbox -t ${env.MUNIN_TOKEN} -u ${helm-chart-artifact-url} --sha256 ${var.sha256-helm} -p CXC100000 -v ${var.released-version-without-build-number} --dry-run ${env.DRY_RUN}
+  #     - munin set-artifact --server sandbox -t ${env.MUNIN_TOKEN} -u ${image-manifest-url} --sha256 ${var.sha256-image} -p CXC2000000 -v ${var.released-version-without-build-number} --dry-run ${env.DRY_RUN}

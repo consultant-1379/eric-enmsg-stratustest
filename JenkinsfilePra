@@ -1,0 +1,81 @@
+/*
+PRA in Mimer
+*/
+pipeline
+{
+    agent {
+        node {
+            label 'stratus_slave'
+        }
+    }
+    stages {
+        stage('Prepare') {
+            steps {
+
+                checkout([$class: 'GitSCM',
+                                  branches: [
+                                             [name: 'origin/master']
+                                            ],
+                                  doGenerateSubmoduleConfigurations: false,
+                                  extensions: [
+                                               [$class: 'SubmoduleOption',
+                                                            disableSubmodules: false,
+                                                            parentCredentials: true,
+                                                            recursiveSubmodules: true,
+                                                            reference: '',
+                                                            trackingSubmodules: false]
+                                              ],
+                                  submoduleCfg: []
+                         ])
+
+
+                sh './bob/bob --help'
+            }
+        }
+        stage('Cleanup')
+        {
+            steps {
+              sh 'bob/bob -r ruleset2.0.pra.yaml clean'
+            }
+        }
+        stage('Init')
+        {
+            steps {
+              sh 'bob/bob -r ruleset2.0.pra.yaml init'
+              archiveArtifacts 'artifact.properties'
+            }
+        }
+        stage('Publish released Docker Images') {
+            when { expression { env.DRY_RUN == "false" && env.MODE == "FULL" || env.MODE == "PARTIAL" }}
+            steps {
+                     sh './bob/bob -r ruleset2.0.pra.yaml publish-released-docker-image'
+                  }
+        }
+        stage('Fetch artifact checksums')
+        {
+            when { expression { env.MODE == "FULL" || env.MODE == "PARTIAL" }}
+            steps
+            {
+                withCredentials([usernamePassword(credentialsId: 'artifactory-api-token-id', usernameVariable: 'HELM_USER', passwordVariable: 'HELM_TOKEN'),
+                                 usernamePassword(credentialsId: 'docker-api-token-id', usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')
+                                ])
+                {
+                    // Fetch checksums of docker images and helm charts
+                    sh './bob/bob -r ruleset2.0.pra.yaml fetch-artifact-checksums'
+                }
+            }
+        }
+         // This stage is executed just for housekeeping to remove the image artifacts from the slave
+        stage('Final Cleanup')
+        {
+          steps {
+            sh 'bob/bob -r ruleset2.0.pra.yaml clean'
+          }
+        }
+    }
+    post {
+        success {
+            echo '#Pipeline Successfully Completed'
+        }
+    }
+}
